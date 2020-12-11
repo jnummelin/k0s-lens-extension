@@ -1,0 +1,59 @@
+{
+  "name": "@k8slens/k0s-lens-extension",
+  "version": "0.1.0",
+  "author": "Jussi Nummelin",
+  "maintainers": [
+    {
+      "name": "jnummelin",
+      "email": "jnummelin@mirantis.com"
+    }
+  ],
+  "description": "Lens extension for k0s",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jnummelin/k0s-lens-extension.git"
+  },
+  "main": "dist/main.js",
+  "renderer": "dist/renderer.js",
+  "lens": {
+    "metadata": {},
+    "styles": []
+  },
+  "scripts": {
+    "build": "webpack",
+    "dev": "webpack --watch"
+  },
+  "dependencies": {
+    "dockerode": "3.2.1",
+    "@kubernetes/client-node": "0.12.2",
+    "react-open-doodles": "^1.0.5",
+    "@lingui/macro": "3.3.0"
+  },
+  "devDependencies": {
+    "@k8slens/extensions": "^4.0.0",
+    "@kubernetes/client-node": "^0.12.3",
+    "@types/dockerode": "3.2.1",
+    "@typescript-eslint/eslint-plugin": "^4.0.0",
+    "@typescript-eslint/parser": "^4.0.0",
+    "@types/react": "^16.9.35",
+    "eslint": "^7.7.0",
+    "ts-loader": "^8.0.4",
+    "typescript": "^4.0.3",
+    "webpack": "^4.44.2",
+    "webpack-cli": "^3.3.11",
+    "mobx": "^5.15.5",
+    "react": "^16.13.1"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/jnummelin/k0s-lens-extension",
+  "bugs": {
+    "url": "https://github.com/jnummelin/k0s-lens-extension/issues"
+  },
+  "keywords": [
+    "extension",
+    "k8slens",
+    "lens",
+    "k0s",
+    "mirantis"
+  ]
+}
