@@ -1,11 +1,11 @@
 import { KubeConfig } from "@kubernetes/client-node"
 import { Store } from "@k8slens/extensions"
 import Dockerode from "dockerode"
-import * as child from 'child_process';
 import * as fs from "fs"
 import * as path from "path"
 import yaml from "js-yaml";
-import { Workspace } from "@k8slens/extensions/dist/src/common/workspace-store";
+import * as crypto from "crypto"
+
 
 const kubeconfigFile = path.join(process.env.HOME, ".kube", "lens-k0s.conf")
 const clusterStore = Store.clusterStore
@@ -19,6 +19,8 @@ export default class k0sManager {
     constructor() {
         this.dockerClient = new Dockerode()
     }
+
+
 
     async ensureController() {
         
@@ -137,13 +139,6 @@ export default class k0sManager {
         return this.dockerClient.createVolume(volumeOpts)
     }
 
-    getKubeConfig(container:Dockerode.Container): KubeConfig {
-        const raw = child.execSync("docker exec k0s-controller cat /var/lib/k0s/pki/admin.conf").toString()
-        const kc = new KubeConfig();
-        kc.loadFromString(raw)
-        return kc
-    }
-
     async getKubeConfigViaExec(container:Dockerode.Container): Promise<KubeConfig> { 
         const execOpts: Dockerode.ExecCreateOptions = {
             AttachStderr: true,
@@ -151,22 +146,18 @@ export default class k0sManager {
             AttachStdout: true,
             Tty: true,
             Privileged: true,
-            //Cmd: ["/bin/cat", "/var/lib/k0s/pki/admin.conf"]
-            // WorkingDir: "/var/lib/k0s/pki/",
             User: "root",
-            //Env: ["TERM=xterm", "HOME=/root", "SHLVL=1", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
-            //Cmd: ["cat", "/var/lib/k0s/pki/admin.conf"]
             Cmd: ["/bin/sh", "-c", "while [ ! -f /var/lib/k0s/pki/admin.conf ]; do sleep 1; done && cat /var/lib/k0s/pki/admin.conf"]
-            //Cmd: ["echo", "foobar"]
+
         }
         const targetFile = path.join(process.env.HOME, ".kube", "lens-k0s.conf")
             
             
-        const output = fs.createWriteStream(targetFile)
-        await this.runExec(container, execOpts, output)
+        //const output = fs.createWriteStream(targetFile)
+        const rawKC = await this.runExecToString(container, execOpts)
 
         const kc = new KubeConfig()
-        kc.loadFromFile(targetFile)
+        kc.loadFromString(rawKC)
         const port = await this.resolveExposedPort(container)
         const serverUrl = new URL(kc.clusters[0].server)
         serverUrl.port = port
@@ -208,11 +199,9 @@ export default class k0sManager {
             'current-context': "k0s-local",
 
         }
-        console.log("about to dump modified kubeconfig to disk", modifiedKc)
-        const data = yaml.safeDump(modifiedKc, { skipInvalid: true })
-        console.log("yaml format:", data)
-        fs.writeFileSync(targetFile, data)
 
+        const data = yaml.safeDump(modifiedKc, { skipInvalid: true })
+        fs.writeFileSync(targetFile, data)
 
         return null
     }
@@ -223,32 +212,69 @@ export default class k0sManager {
         return info.NetworkSettings.Ports["6443/tcp"][0].HostPort
     }
 
-    async runExec(container: Dockerode.Container, options: Dockerode.ExecCreateOptions, output: fs.WriteStream) {
-        return new Promise<void>((resolve, reject) => container.exec(options, function(err, exec) {
-          if (err) {
-            reject(err)
-          }
-          const execStartOpts: Dockerode.ExecStartOptions = {
-            Tty: true,
-            Detach: false
-          }
-          exec.start(execStartOpts, function(err, stream) {
+    async runExecToString(container: Dockerode.Container, options: Dockerode.ExecCreateOptions): Promise<string> {
+        return new Promise<string>((resolve, reject) => container.exec(options, function(err, exec) {
             if (err) {
               reject(err)
             }
-
-            stream.on('end', function() {
-              console.log("received stream end, resolving")
-            //   exec.inspect((err, data) => {
-            //       console.log(data)
-            //   })
-              resolve()
+            const execStartOpts: Dockerode.ExecStartOptions = {
+              Tty: true,
+              Detach: false
+            }
+            exec.start(execStartOpts, function(err, stream) {
+              if (err) {
+                reject(err)
+              }
+              
+              const chunks:any = []
+              stream.on('data', chunk => chunks.push(chunk))
+              stream.on('error', err => reject(err))
+              stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
             })
+          }))
+    }
 
-            
-            stream.pipe(output)
-            //output.close()
-          })
-        }))
+    async addWorker() {
+        const workerName = "k0s-worker-" + crypto.randomBytes(5).toString("hex")
+        console.log("starting to create worker:", workerName)
+        const token = await this.exec(["k0s", "token", "create", "--role=worker"])
+        console.log("got token:", token)
+        const container = await this.dockerClient.createContainer(
+            {
+                name: workerName,
+                Image: "docker.io/k0sproject/k0s:latest",
+                Hostname: workerName,
+                Volumes: {
+                    "/var/lib/k0s": {}
+                },
+                HostConfig: {
+                    RestartPolicy: {
+                        Name: "always"
+                    },
+                    Privileged: true,
+                },
+                Cmd: [
+                    "k0s",
+                    "worker",
+                    token
+                ]
+            }
+        )
+        console.log("worker created, starting")
+        await container.start()
+        console.log("worker started")
+    }
+
+    async exec(cmd:string[]): Promise<string> {
+        const container = this.dockerClient.getContainer("k0s-controller")
+        return this.runExecToString(container, {
+            AttachStderr: true,
+            AttachStdin: false,
+            AttachStdout: true,
+            Tty: true,
+            Privileged: true,
+            User: "root",
+            Cmd: cmd
+        })
     }
 }
